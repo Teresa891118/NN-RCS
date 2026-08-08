@@ -188,25 +188,15 @@ Everything is written to `OUTPUT_DIR` (default `nnrcs_output/`).
 
 | File | Contents |
 |---|---|
-| `fitted_curve.csv` | The fitted curve on the grid: `time`, `rate_fitted`, `log_rate_fitted`, `slope_log_rate`, `percent_change_per_unit` |
-| `fitted_at_observations.csv` | `time`, `rate_observed`, `rate_fitted`, `log_rate_observed`, `log_rate_fitted`, `residual_log_rate`, `var_log_rate`, `sd_log_rate` |
-| `fitted_at_custom_times.csv` | Only if `CUSTOM_TIMES` is non-empty: `time`, `rate_fitted`, `log_rate_fitted`, `slope_log_rate`, `within_observed_range` |
+| `fitted_curve.csv` | The fitted curve on the grid: `time`, `y_hat` (log scale), `rate_hat` (rate scale), `slope`, `percent_change_per_unit` |
+| `fitted_at_observations.csv` | The curve at your own time points, alongside the two values you supplied and the residuals |
+| `fitted_at_custom_times.csv` | Only if `CUSTOM_TIMES` is non-empty |
 | `model_parameters.csv` | Every estimated parameter — 62 with the default 20 nodes — plus the two time-scaling constants |
 | `nn_rcs_fit.png` | Observed points and the fitted curve |
 
-Column names use no statistical shorthand: there is no `y` and no `hat`.
-Everything is either **observed** — exactly what you put in the file — or
-**fitted** — what the model produced. `log_` prefixes the natural log of the
-same quantity.
-
-`slope_log_rate` is d(log rate)/d(time). Because the quantity is a log rate,
-this is the relative change of the rate per time unit; ×100 it is
-`percent_change_per_unit`, usually reported as the annual percentage change.
-
-`within_observed_range` is `True` when the time point lies inside the period
-you supplied and `False` when it does not. A `False` value is an
-extrapolation: a number is returned, because the restricted cubic spline
-continues linearly beyond the outer knots, but no data support it.
+`slope` is d(ŷ)/d(time). Because ŷ is a log rate, this is the relative change of
+the rate per time unit; ×100 it is the percentage change per time unit, the
+quantity usually reported as the annual percentage change.
 
 **No goodness-of-fit or model-comparison statistic is computed.** This program
 fits one curve and hands you the curve.
@@ -277,135 +267,4 @@ FIG_LINE_WIDTH = 1.1
 
 ### Model
 
-The defaults are the ones used in the paper. They worked across every simulated
-scenario studied and both real series, so you should not normally need to change
-them.
-
-| Setting | Default | Meaning |
-|---|---|---|
-| `N_HIDDEN_NODES` | `20` | Hidden nodes. Total parameters = 3 × nodes + 2 |
-| `EPOCHS` | `2000` | Optimiser passes. Increase if the final loss is still falling |
-| `LEARNING_RATE` | `0.001` | Adam step size |
-| `GAMMA_INIT_SD` | `0.01` | SD of the random starting output weights |
-| `NODE_SCALE_INIT` | `2.0` | Starting node scale, and initial spread of node positions |
-| `W_MIN` | `0.01` | Lower bound on the node scales |
-| `W_MAX` | `15.0` | Upper bound on the node scales |
-| `B_CLIP_FRACTION` | `0.95` | Node positions kept within ±0.95·mean\|W\| |
-| `RANDOM_SEED` | `42` | Any integer. Same seed, same result |
-| `PRINT_EVERY` | `500` | Report the loss every N epochs; `0` for silence |
-
----
-
-## The model
-
-With time rescaled to *x* ∈ [−1, +1]:
-
-```
-ŷ(x) = α + β·x + Σ_j  γ_j · φ( W_j · x + B_j )
-```
-
-where φ is a three-knot restricted cubic spline with knots at *z* = −1, 0, +1.
-Parameters: α, β, and (W_j, B_j, γ_j) for each of the *J* hidden nodes —
-3*J* + 2 = 62 by default.
-
-Fitted by minimising the inverse-variance weighted squared error on the log
-scale,
-
-```
-Σ_i  (1 / var_i) · ( log(rate_i) − ŷ(x_i) )²
-```
-
-which is the maximum likelihood criterion when each log rate is normal with
-variance `var_i`. Three things keep the curve well behaved:
-
-1. **Structured initialisation.** Training starts from the inverse-variance
-   weighted straight line, with small random output weights. The curve departs
-   from that line only as far as the data require.
-2. **Hard bounds instead of a penalty.** After every optimiser step the node
-   scales and positions are clipped back into range, which keeps the hidden
-   nodes inside the observed period.
-3. **The RCS activation itself**, which is linear beyond its outer knots.
-
----
-
-## Requirements
-
-```
-numpy
-pandas
-matplotlib
-tensorflow
-openpyxl        # only if you read .xlsx files
-```
-
-```bash
-pip install numpy pandas matplotlib tensorflow
-```
-
-A GPU is used automatically if one is available, but is not needed. A single
-model fit takes under ten seconds on a standard personal computer.
-
-Results are exactly reproducible: same input and same `RANDOM_SEED` gives the
-same numbers every time.
-
----
-
-## Questions you may have
-
-**Should I give you the rate or its logarithm?**
-The rate. The column named by `COL_RATE` must hold the rate as you would report
-it. The program logs it for you. Only the *variance* is on the log scale.
-
-**How many time points do I need?**
-The program stops below 6 and warns below 15. A network with 62 parameters is
-very flexible for a short series. The method is intended for series of a few
-decades.
-
-**Must the time points be equally spaced?**
-The curve is fitted correctly either way, but the program warns you if they are
-not, because a fine output grid may then fall in places where you have no data.
-
-**My data are not disease rates.**
-That is fine. Anything positive with a variance at each time point works. Change
-`FIG_YLABEL` so the axis does not say "incidence rate".
-
-**What if a rate or a variance is zero?**
-The program stops. A rate of zero has no logarithm, and a variance of zero would
-give that point infinite weight. If your series has a genuinely error-free
-point, give it a very small positive variance instead.
-
-**Can I get a confidence interval for the fitted curve?**
-Not from this program. That requires resampling, which is outside its scope.
-
-**Why is there no measure of fit?**
-Because deciding whether a fit is good is a separate question from producing
-one, and it needs a comparison against something — held-out observations, a
-known truth, or a competing model. Those comparisons are reported in the paper.
-This program does the fitting.
-
----
-
-## Citation
-
-If you use this code, please cite:
-
-> [Author]. *Flexible modeling of secular trends in disease rates: neural
-> networks with restricted cubic spline.* [Journal / thesis], [year].
-
----
-
-## Demonstration data
-
-Oesophageal cancer incidence in Taiwan, 1980–2023, men and women, from the
-Taiwan Cancer Registry. Age-standardised to the WHO 2000 World Standard
-Population over 18 five-year age groups and expressed per 100,000; `asir` is the
-rate and `var_log_asir` is the variance of its logarithm by the delta method.
-Mean rates over the period are 10.10 per 100,000 in men and 0.89 in women. These
-are aggregate published summary figures; no individual-level information is
-involved.
-
----
-
-## Licence
-
-[Add your licence here — MIT is a common choice for research code.]
+The defaults are the ones used in
