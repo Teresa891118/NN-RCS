@@ -91,12 +91,13 @@ All files are written to the folder named in OUTPUT_DIR.
 
     fitted_curve.csv          The fitted curve on a fine grid. This is the
                               red curve in the figure, as numbers. Columns:
-                                  time        time point
-                                  y_hat       fitted value on the log scale
-                                  rate_hat    exp(y_hat), i.e. the rate scale
-                                  slope       d(y_hat)/d(time), = relative
-                                              change per time unit
-                                  percent_change_per_unit   100 * slope
+                                  time                     time point
+                                  rate_fitted              the fitted rate
+                                  log_rate_fitted          its natural log
+                                  slope_log_rate           d(log rate)/d(time),
+                                                           i.e. the relative
+                                                           change per time unit
+                                  percent_change_per_unit  100 x slope_log_rate
                               The spacing of this grid is OUTPUT_STEP. Set
                               OUTPUT_STEP = 0.01 and you get 1.00, 1.01, 1.02,
                               ...; set it to 1 and you get 1, 2, 3, ...
@@ -104,6 +105,12 @@ All files are written to the folder named in OUTPUT_DIR.
     fitted_at_observations.csv    The fitted curve evaluated exactly at your
                               own time points, next to the two values you
                               supplied, so you can compare them directly.
+                              Columns: time, rate_observed, rate_fitted,
+                              log_rate_observed, log_rate_fitted,
+                              residual_log_rate, var_log_rate, sd_log_rate.
+                              "observed" always means what you gave the
+                              program; "fitted" always means what the model
+                              produced.
 
     fitted_at_custom_times.csv    Only written if you put time points in
                               CUSTOM_TIMES below. Use this when you want a few
@@ -357,11 +364,19 @@ tf.get_logger().setLevel('ERROR')
 # ==============================================================================
 # 5. BUILT-IN DEMONSTRATION DATA
 # ==============================================================================
-# Oesophageal cancer in Taiwan, 1980-2023 (44 calendar years).
-# Age-standardised to the WHO 2000 World Standard Population over 18 five-year
-# age groups; y is the natural log of the rate per 100,000 and var_y is its
-# variance obtained by the delta method. These are aggregate, already-published
-# summary figures; no individual-level information is involved.
+# Oesophageal cancer in Taiwan, 1980-2023 (44 calendar years), from the Taiwan
+# Cancer Registry. Age-standardised to the WHO 2000 World Standard Population
+# over 18 five-year age groups and expressed per 100,000. The two arrays below
+# are exactly what this program asks a user to supply:
+#     _RATE   is the age-standardised incidence rate itself, NOT logged
+#     _VARLOG is the variance of the LOG of that rate, by the delta method
+# Mean rates over the period are 10.10 per 100,000 in men and 0.89 in women.
+# These are aggregate, already-published summary figures; no individual-level
+# information is involved.
+#
+# Note that the age standardisation has already been done -- this program never
+# sees age groups, standard-population weights or case counts. That is the whole
+# point of the interface: you hand it a rate and a variance, nothing else.
 # ==============================================================================
 _DEMO_YEARS = list(range(1980, 2024))
 
@@ -454,7 +469,11 @@ def write_template(path):
 # 6. READING AND CHECKING THE DATA
 # ==============================================================================
 def load_data():
-    """Return (time, y, var_y) as three 1-D numpy arrays, after validation."""
+    """Read and check the data.
+
+    Returns four 1-D arrays: (time, rate, log rate, variance of the log rate).
+    The rate is what the user supplied; the log is taken here, once.
+    """
     src = DATA_SOURCE.lower()
 
     if src == 'demo_male':
@@ -649,7 +668,7 @@ class NNRCS(tf.keras.Model):
         return np.squeeze(self.forward(xt).numpy())
 
 
-def fit_nn_rcs(t, y, var_y):
+def fit_nn_rcs(t, y, var_log_rate):
     """Fit the network. Returns (model, rescale, unrescale)."""
     t_lo, t_hi = float(t[0]), float(t[-1])
 
@@ -660,7 +679,7 @@ def fit_nn_rcs(t, y, var_y):
         return t_lo + (np.asarray(xx, float) + 1.0) * (t_hi - t_lo) / 2.0
 
     x = rescale(t)
-    inv = 1.0 / var_y                      # precision of each observation
+    inv = 1.0 / var_log_rate                      # precision of each observation
     w = inv / inv.mean()                   # normalised so the mean weight is 1
 
     # Structured start: an inverse-variance weighted straight line. Training
@@ -876,9 +895,9 @@ def main():
               'again.')
         return None, None
 
-    t, rate_obs, y, var_y = load_data()
+    t, rate_obs, y, var_log_rate = load_data()
 
-    model, rescale, unrescale = fit_nn_rcs(t, y, var_y)
+    model, rescale, unrescale = fit_nn_rcs(t, y, var_log_rate)
     t_lo, t_hi = float(t[0]), float(t[-1])
 
     written = []
@@ -894,11 +913,13 @@ def main():
         print(f'\n  note: {grid_note}')
     g_y, g_rate = evaluate(model, rescale, grid_t)
     g_slope = slope_of(model, rescale, grid_t)
+    # Column names avoid statistical shorthand: no "y", no "hat". Everything
+    # is either "observed" (what you supplied) or "fitted" (what the model says).
     curve = pd.DataFrame({
         'time': grid_t,
-        'y_hat': g_y,
-        'rate_hat': g_rate,
-        'slope': g_slope,
+        'rate_fitted': g_rate,
+        'log_rate_fitted': g_y,
+        'slope_log_rate': g_slope,
         'percent_change_per_unit': 100.0 * g_slope,
     })
     p = os.path.join(OUTPUT_DIR, 'fitted_curve.csv')
@@ -910,14 +931,13 @@ def main():
     o_y, o_rate = evaluate(model, rescale, t)
     obs = pd.DataFrame({
         'time': t,
-        'rate_observed': rate_obs,
-        'var_log_rate': var_y,
-        'y_observed': y,
-        'sd_y': np.sqrt(var_y),
-        'rate_observed': rate_obs,
-        'y_hat': o_y,
-        'rate_hat': o_rate,
-        'residual_log': y - o_y,
+        'rate_observed': rate_obs,          # exactly what you supplied
+        'rate_fitted': o_rate,
+        'log_rate_observed': y,             # log of what you supplied
+        'log_rate_fitted': o_y,
+        'residual_log_rate': y - o_y,       # observed minus fitted
+        'var_log_rate': var_log_rate,              # exactly what you supplied
+        'sd_log_rate': np.sqrt(var_log_rate),
     })
     p = os.path.join(OUTPUT_DIR, 'fitted_at_observations.csv')
     obs.to_csv(p, index=False)
@@ -936,9 +956,9 @@ def main():
         c_y, c_rate = evaluate(model, rescale, ct)
         cus = pd.DataFrame({
             'time': ct,
-            'y_hat': c_y,
-            'rate_hat': c_rate,
-            'slope': slope_of(model, rescale, ct),
+            'rate_fitted': c_rate,
+            'log_rate_fitted': c_y,
+            'slope_log_rate': slope_of(model, rescale, ct),
             'within_observed_range': (ct >= t_lo) & (ct <= t_hi),
         })
         p = os.path.join(OUTPUT_DIR, 'fitted_at_custom_times.csv')
