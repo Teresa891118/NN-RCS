@@ -188,15 +188,25 @@ Everything is written to `OUTPUT_DIR` (default `nnrcs_output/`).
 
 | File | Contents |
 |---|---|
-| `fitted_curve.csv` | The fitted curve on the grid: `time`, `y_hat` (log scale), `rate_hat` (rate scale), `slope`, `percent_change_per_unit` |
-| `fitted_at_observations.csv` | The curve at your own time points, alongside the two values you supplied and the residuals |
-| `fitted_at_custom_times.csv` | Only if `CUSTOM_TIMES` is non-empty |
+| `fitted_curve.csv` | The fitted curve on the grid: `time`, `rate_fitted`, `log_rate_fitted`, `slope_log_rate`, `percent_change_per_unit` |
+| `fitted_at_observations.csv` | `time`, `rate_observed`, `rate_fitted`, `log_rate_observed`, `log_rate_fitted`, `residual_log_rate`, `var_log_rate`, `sd_log_rate` |
+| `fitted_at_custom_times.csv` | Only if `CUSTOM_TIMES` is non-empty: `time`, `rate_fitted`, `log_rate_fitted`, `slope_log_rate`, `within_observed_range` |
 | `model_parameters.csv` | Every estimated parameter — 62 with the default 20 nodes — plus the two time-scaling constants |
 | `nn_rcs_fit.png` | Observed points and the fitted curve |
 
-`slope` is d(ŷ)/d(time). Because ŷ is a log rate, this is the relative change of
-the rate per time unit; ×100 it is the percentage change per time unit, the
-quantity usually reported as the annual percentage change.
+Column names use no statistical shorthand: there is no `y` and no `hat`.
+Everything is either **observed** — exactly what you put in the file — or
+**fitted** — what the model produced. `log_` prefixes the natural log of the
+same quantity.
+
+`slope_log_rate` is d(log rate)/d(time). Because the quantity is a log rate,
+this is the relative change of the rate per time unit; ×100 it is
+`percent_change_per_unit`, usually reported as the annual percentage change.
+
+`within_observed_range` is `True` when the time point lies inside the period
+you supplied and `False` when it does not. A `False` value is an
+extrapolation: a number is returned, because the restricted cubic spline
+continues linearly beyond the outer knots, but no data support it.
 
 **No goodness-of-fit or model-comparison statistic is computed.** This program
 fits one curve and hands you the curve.
@@ -395,3 +405,7 @@ are aggregate published summary figures; no individual-level information is
 involved.
 
 ---
+
+## Licence
+
+[Add your licence here — MIT is a common choice for research code.]
